@@ -3,7 +3,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = "~> 5.14"
     }
   }
   # Remote state in Azure Storage with Entra ID auth; values from -backend-config in CI.
