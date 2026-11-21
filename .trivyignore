@@ -1,1 +1,9 @@
 # Accepted Trivy findings. Each one is a deliberate design decision; CI blocks on anything else.
+
+# AZU-0012: the Terraform state storage account (terraform/bootstrap) has no network rules.
+# GitHub-hosted runners connect from a large, changing set of public addresses, so an IP allow-list
+# is not workable. The account is protected by identity instead: shared keys are disabled (Entra ID
+# only), RBAC is granted to exactly two federated pipeline identities, blobs are versioned with
+# 30-day soft delete, and TLS 1.2 is enforced. Stricter option: self-hosted runners in a VNet and a
+# private endpoint for the account, then set default_action = "Deny".
+AZU-0012
