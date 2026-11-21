@@ -20,8 +20,6 @@ Every rule above is checked by `terraform test` against a mocked provider, so yo
   <img alt="Hybrid architecture: the factory's OT control zone, industrial DMZ and corporate IT connect over ExpressRoute (primary) and site-to-site VPN (backup) to a connectivity hub with ExpressRoute and VPN gateways, Azure Firewall Premium and a DNS Private Resolver; the firewall forwards to application (private AKS, ACR), data (SQL, ADLS, Event Hubs, Data Factory) and shared-services spokes; the data spoke geo-replicates to North Europe; governance and FinOps apply Azure Policy; OT has no direct path to Azure." src="docs/diagrams/hybrid-architecture-light.svg" width="100%">
 </picture>
 
-<sub>Animated diagrams generated from <a href="docs/diagrams/diagrams.yaml">docs/diagrams/diagrams.yaml</a> with <a href="https://github.com/santoshmyakala/santoshmyakala/tree/main/tools/archdiagram">archdiagram</a>.</sub>
-
 ## Design at a glance
 
 | Area | Design | Details |
