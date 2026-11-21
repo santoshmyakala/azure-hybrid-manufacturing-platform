@@ -1,0 +1,1 @@
+# Accepted Trivy findings. Each one is a deliberate design decision; CI blocks on anything else.

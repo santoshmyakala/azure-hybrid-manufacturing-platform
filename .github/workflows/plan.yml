@@ -1,0 +1,57 @@
+# Pull requests: plan against nonprod and prod, post the result on the PR.
+name: plan
+
+on:
+  pull_request:
+    paths: ["terraform/**", ".github/workflows/plan.yml", ".github/workflows/_terraform.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  not-configured:
+    if: vars.AZURE_PLAN_CLIENT_ID == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::Azure is not connected to this repository: live plans are skipped. Offline tests still run in the ci workflow. See docs/ci-cd.md to enable." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  plan:
+    if: vars.AZURE_PLAN_CLIENT_ID != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [nonprod, prod]
+    uses: ./.github/workflows/_terraform.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ matrix.environment }}
+    secrets:
+      VPN_SHARED_KEY: ${{ secrets.VPN_SHARED_KEY }}
+
+  comment:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+      - name: Post or update one sticky plan comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const parts = ['nonprod', 'prod']
+              .filter(e => fs.existsSync(`plan-${e}/summary.md`))
+              .map(e => fs.readFileSync(`plan-${e}/summary.md`, 'utf8'));
+            const body = '<!-- terraform-plan -->\n' + parts.join('\n\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const mine = comments.find(c => c.body.startsWith('<!-- terraform-plan -->'));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });

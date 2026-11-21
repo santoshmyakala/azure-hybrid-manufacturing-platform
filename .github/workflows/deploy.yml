@@ -1,0 +1,48 @@
+# main → nonprod → (approval) → prod. Each stage plans, applies exactly that plan and verifies the
+# hybrid links (ExpressRoute, VPN) and the firewall.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["terraform/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy # one rollout at a time; never cancel a running apply
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  not-configured:
+    if: vars.DEPLOY_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::Deployments are disabled (repository variable DEPLOY_ENABLED is not 'true'). See docs/ci-cd.md." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  nonprod:
+    if: vars.DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/_terraform.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: nonprod
+      apply: true
+    secrets:
+      VPN_SHARED_KEY: ${{ secrets.VPN_SHARED_KEY }}
+
+  prod:
+    needs: nonprod # the prod environment requires a reviewer's approval before this job starts
+    uses: ./.github/workflows/_terraform.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: prod
+      apply: true
+    secrets:
+      VPN_SHARED_KEY: ${{ secrets.VPN_SHARED_KEY }}

@@ -1,0 +1,16 @@
+# Copy to prod.tfvars (git-ignored). The VPN key comes from TF_VAR_vpn_shared_key / a secret store.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+environment     = "prod"
+sql_admin_group = { name = "sg-mfg-sql-admins", object_id = "<entra-group-object-id>" }
+aks_admin_group_object_ids = ["<entra-group-object-id>"]
+expressroute = {
+  service_provider = "<provider>"
+  peering_location = "Stockholm"
+  bandwidth_mbps   = 1000
+  primary_subnet   = "192.168.255.0/30"
+  secondary_subnet = "192.168.255.4/30"
+  peer_asn         = 65010
+  vlan_id          = 100
+}
+vpn = { factory_public_ip = "<factory-public-ip>", factory_bgp_asn = 65020, factory_bgp_peer = "10.30.255.1" }
+monthly_budget = 25000

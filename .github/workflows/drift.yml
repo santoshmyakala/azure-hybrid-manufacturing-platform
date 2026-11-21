@@ -1,0 +1,57 @@
+# Nightly: detect changes made outside Terraform (console edits, emergency fixes) and track them in an issue.
+name: drift
+
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    if: vars.AZURE_PLAN_CLIENT_ID != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [nonprod, prod]
+    uses: ./.github/workflows/_terraform.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ matrix.environment }}
+    secrets:
+      VPN_SHARED_KEY: ${{ secrets.VPN_SHARED_KEY }}
+
+  report:
+    needs: detect
+    if: always() && needs.detect.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+      - name: Open, update or close the drift issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const drifted = ['nonprod', 'prod'].filter(e =>
+              fs.existsSync(`plan-${e}/summary.md`) && !/No changes/.test(fs.readFileSync(`plan-${e}/summary.md`, 'utf8')));
+            const { owner, repo } = context.repo;
+            const open = (await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: 'drift' })).data;
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            if (drifted.length) {
+              const body = `Infrastructure differs from Terraform in: **${drifted.join(', ')}**.\n\nPlan: ${run}\n\nEither codify the change or re-apply to remove it.`;
+              if (open.length) await github.rest.issues.createComment({ owner, repo, issue_number: open[0].number, body });
+              else await github.rest.issues.create({ owner, repo, title: 'Infrastructure drift detected', body, labels: ['drift'] });
+            } else {
+              for (const i of open) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: i.number, body: `No drift any more (${run}). Closing.` });
+                await github.rest.issues.update({ owner, repo, issue_number: i.number, state: 'closed' });
+              }
+            }

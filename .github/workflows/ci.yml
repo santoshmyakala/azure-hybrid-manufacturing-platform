@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: terraform ${{ matrix.dir }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [terraform, terraform/bootstrap]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.2"
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - name: Connectivity, OT segmentation, private-PaaS, governance, FinOps and DR tests (mocked azurerm, no subscription)
+        if: matrix.dir != 'terraform/bootstrap'
+        run: terraform test
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+      - run: tflint --init && tflint --format compact --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+  iac-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Trivy misconfiguration scan (blocking on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          trivyignores: .trivyignore # each accepted finding is justified in the file
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: gitleaks (checksum-verified)
+        run: |
+          v=8.30.1; base=https://github.com/gitleaks/gitleaks/releases/download/v$v
+          curl -sSLO "$base/gitleaks_${v}_linux_x64.tar.gz"; curl -sSLO "$base/gitleaks_${v}_checksums.txt"
+          sha256sum --ignore-missing -c "gitleaks_${v}_checksums.txt"
+          tar xzf "gitleaks_${v}_linux_x64.tar.gz" gitleaks
+          ./gitleaks git --redact --exit-code 1 .

@@ -1,0 +1,108 @@
+- out: hybrid-architecture
+  title: Azure hybrid cloud for manufacturing
+  subtitle: ExpressRoute primary / VPN backup into a firewalled hub · private-only spokes · the OT control network is never reachable from the cloud
+  grid: {dx: 235, dy: 155}
+  groups:
+    - {id: factory, label: Factory (on-premises), icon: region, color: gray, box: [0, 0.3, 0, 2.2]}
+    - {id: hub, label: Connectivity hub, sub: Sweden Central, icon: azure, color: azure, box: [2.2, 0.75, 3.2, 2.2]}
+    - {id: spokes, label: Spokes, icon: azure, color: blue, box: [4.4, 0.3, 4.4, 2.2]}
+  nodes:
+    - {id: ot, label: OT control (L0–2), sub: PLC · SCADA · HMI, icon: [gear, switch], at: [0, 0.3], color: red}
+    - {id: dmz, label: Industrial DMZ (L3.5), sub: historian · edge gateway, icon: [server, shield], at: [0, 1.25], color: amber}
+    - {id: it, label: Corporate IT (L4), sub: AD · DNS · MES users, icon: [users, dns], at: [0, 2.2], color: blue}
+    - {id: er, label: ExpressRoute, sub: primary link, icon: switch, at: [1.1, 0.6], color: green, pulse: true}
+    - {id: vpn, label: S2S VPN, sub: backup · BGP, icon: lock, at: [1.1, 1.75], color: purple}
+    - {id: gw, label: ER + VPN gateways, sub: zone-redundant, icon: gateway, at: [2.2, 0.75], color: azure}
+    - {id: fw, label: Azure Firewall Premium, sub: IDPS · OT conduits, icon: firewall, at: [3.2, 1.45], color: red, pulse: true}
+    - {id: dns, label: DNS Private Resolver, sub: privatelink ⇄ AD domain, icon: dns, at: [2.2, 2.2], color: azure}
+    - {id: app, label: Application spoke, sub: private AKS · ACR, icon: [kubernetes, registry], at: [4.4, 0.3], color: blue}
+    - {id: data, label: Data spoke, sub: SQL · ADLS · Event Hubs · ADF, icon: [database, topic, key], at: [4.4, 1.25], color: green}
+    - {id: shared, label: Shared services, sub: Bastion · Update Mgr · Backup, icon: [backup, gear], at: [4.4, 2.2], color: teal}
+    - {id: gov, label: Governance + FinOps, sub: Policy · budgets · Defender, icon: [shield, chart, alert], at: [3.2, -0.55], color: purple}
+    - {id: dr, label: DR region, sub: North Europe, icon: [region, backup], at: [5.6, 1.25], color: amber}
+  edges:
+    - {from: ot, to: dmz, label: OPC UA / replication, kind: data, packet: doc}
+    - {from: ot, to: er, label: no direct path, kind: deny, at: 0.45}
+    - {from: dmz, to: er, label: "443 / 5671", kind: secure, at: 0.45}
+    - {from: it, to: vpn, label: failover, kind: control, at: 0.5}
+    - {from: er, to: gw, kind: secure, packet: lock}
+    - {from: vpn, to: gw, kind: control}
+    - {from: gw, to: fw, kind: data}
+    - {from: fw, to: app, kind: data}
+    - {from: fw, to: data, kind: data, packet: db}
+    - {from: fw, to: shared, kind: data}
+    - {from: dns, to: it, label: DNS forwarding, kind: async, at: 0.5}
+    - {from: data, to: dr, label: geo-replication, kind: async, packet: db}
+    - {from: gov, to: hub, label: Azure Policy, kind: control, at: 0.4}
+
+- out: ot-conduits
+  title: OT/IT segmentation — IEC 62443 zones and conduits
+  subtitle: Data leaves the plant only from the industrial DMZ, outbound, on named ports; nothing in Azure can initiate a connection into the control zone
+  grid: {dx: 265, dy: 150}
+  groups:
+    - {id: plant, label: Plant, icon: gear, color: red, box: [0, 0, 1, 0]}
+    - {id: edge, label: Industrial DMZ (level 3.5), icon: shield, color: amber, box: [2, 0, 2, 0]}
+    - {id: cloud, label: Azure data spoke, icon: azure, color: azure, box: [3.4, 0, 4.4, 0]}
+  nodes:
+    - {id: plc, label: PLC / SCADA, sub: levels 0–2, icon: switch, at: [0, 0], color: red}
+    - {id: mes, label: MES · historian, sub: level 3, icon: database, at: [1, 0], color: orange}
+    - {id: dmz, label: Edge gateway, sub: historian replica, icon: [server, gateway], at: [2, 0], color: amber, pulse: true}
+    - {id: eh, label: Event Hubs, sub: Entra ID auth · private, icon: topic, at: [3.4, 0], color: azure}
+    - {id: lake, label: ADLS · Azure SQL, sub: analytics · reporting, icon: [database, filesystem], at: [4.4, 0], color: green}
+    - {id: aks, label: Cloud workloads, sub: AKS · admin tools, icon: kubernetes, at: [3.4, 1.35], color: blue}
+    - {id: it, label: Corporate IT, sub: level 4, icon: users, at: [1, 1.35], color: gray}
+  edges:
+    - {from: plc, to: mes, label: OPC UA, kind: data}
+    - {from: mes, to: dmz, label: replicate, kind: data, packet: doc}
+    - {from: dmz, to: eh, label: "443 / 5671 outbound", kind: secure, at: 0.5}
+    - {from: eh, to: lake, kind: async, packet: db}
+    - {from: aks, to: plc, label: denied by firewall + NSG, kind: deny, via: [[3.4, 0.7], [0, 0.7]], at: 0.5}
+    - {from: it, to: aks, label: "users → apps 443", kind: secure}
+
+- out: finops
+  title: FinOps loop — inform, optimise, operate
+  subtitle: Every euro is attributable (enforced tags), forecast before it is spent, and the design itself contains cost levers
+  grid: {dx: 265, dy: 150}
+  nodes:
+    - {id: tags, label: Enforced tags, sub: 4 tags required by policy, icon: shield, at: [0, 0], color: purple}
+    - {id: show, label: Showback, sub: budget per resource group, icon: chart, at: [1, 0], color: blue}
+    - {id: fc, label: Forecast alerts, sub: forecast + actual thresholds, icon: alert, at: [2, 0], color: amber, pulse: true}
+    - {id: lev, label: Built-in levers, sub: spot · tiering · log cap, icon: gear, at: [2, 1.2], color: green}
+    - {id: rev, label: Review + commit, sub: reservations · Advisor, icon: doc, at: [1, 1.2], color: teal}
+    - {id: pol, label: Policy as code, sub: GitHub Actions + Terraform, icon: [githubactions, terraform], at: [0, 1.2], color: purple}
+  edges:
+    - {from: tags, to: show, label: inform, kind: data}
+    - {from: show, to: fc, kind: data}
+    - {from: fc, to: lev, label: optimise, kind: control}
+    - {from: lev, to: rev, kind: data}
+    - {from: rev, to: pol, label: operate, kind: control}
+    - {from: pol, to: tags, kind: control}
+
+- out: github-actions
+  title: GitHub Actions — from pull request to the factory platform
+  subtitle: OIDC federated credentials (no client secrets), plan reviewed on the PR, prod deploy after approval, nightly drift check
+  grid: {dx: 235, dy: 160}
+  groups:
+    - {id: pr, label: Pull request, icon: github, color: blue, box: [0, 0, 3, 0]}
+    - {id: main, label: Merge to main, icon: githubactions, color: green, box: [0, 1.35, 2, 1.35]}
+  nodes:
+    - {id: dev, label: Engineer, sub: opens a PR, icon: user, at: [0, 0], color: gray}
+    - {id: ci, label: ci, sub: fmt · validate · 12 tests · tflint, icon: [terraform, check], at: [1, 0], color: blue}
+    - {id: scan, label: Trivy + gitleaks, sub: IaC + secrets gates, icon: [trivy, key], at: [2, 0], color: green}
+    - {id: plan, label: plan, sub: read-only identity, icon: [githubactions, terraform], at: [3, 0], color: purple}
+    - {id: comment, label: PR comment, sub: nonprod + prod plan, icon: doc, at: [4.35, 0], color: purple}
+    - {id: np, label: Deploy nonprod, sub: apply · verify ER / VPN / firewall, icon: [terraform, azure], at: [0, 1.35], color: green}
+    - {id: gate, label: Approval, sub: prod environment, icon: user, at: [1, 1.35], color: red, pulse: true}
+    - {id: prod, label: Deploy prod, sub: same plan, same checks, icon: [terraform, azure], at: [2, 1.35], color: green}
+    - {id: entra, label: Entra ID, sub: federated credential · 1 h token, icon: key, at: [3.2, 1.35], color: orange}
+    - {id: drift, label: Nightly drift check, sub: opens / closes an issue, icon: [scheduler, alert], at: [4.35, 1.35], color: amber}
+  edges:
+    - {from: dev, to: ci, kind: data}
+    - {from: ci, to: scan, kind: data}
+    - {from: scan, to: plan, kind: data}
+    - {from: plan, to: comment, kind: data, packet: doc}
+    - {from: comment, to: np, label: review + merge, kind: control, via: [[4.35, 0.68], [0, 0.68]], at: 0.5}
+    - {from: np, to: gate, kind: data}
+    - {from: gate, to: prod, label: approved, kind: secure}
+    - {from: prod, to: entra, label: OIDC, kind: secure}
+    - {from: drift, to: entra, kind: metrics}

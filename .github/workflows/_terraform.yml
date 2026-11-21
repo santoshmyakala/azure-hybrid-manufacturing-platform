@@ -1,0 +1,102 @@
+# Reusable: plan (and optionally apply) one environment. Authentication is GitHub OIDC → Entra ID
+# federated credentials on a user-assigned identity: no client secrets exist anywhere.
+name: terraform-environment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: nonprod | prod
+        type: string
+        required: true
+      apply:
+        type: boolean
+        default: false
+    secrets:
+      VPN_SHARED_KEY:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    name: ${{ inputs.apply && 'apply' || 'plan' }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    # plan-<env>: unprotected, read-only identity. <env>: protected (main only, reviewers for prod).
+    environment: ${{ inputs.apply && inputs.environment || format('plan-{0}', inputs.environment) }}
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ inputs.apply && vars.AZURE_DEPLOY_CLIENT_ID || vars.AZURE_PLAN_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_vpn_shared_key: ${{ secrets.VPN_SHARED_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.2"
+          terraform_wrapper: false
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Environment tfvars (non-secret)
+        env:
+          TFVARS: ${{ vars.TFVARS }}
+        run: printf '%s\n' "$TFVARS" > ci.auto.tfvars
+      - run: >
+          terraform init
+          -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ inputs.environment }}.tfstate"
+      - name: Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -lock-timeout=5m -detailed-exitcode -no-color -out=tfplan > plan.log 2>&1
+          code=$?
+          set -e
+          cat plan.log
+          [ $code -eq 1 ] && exit 1
+          echo "changes=$([ $code -eq 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          terraform show -no-color tfplan > plan.txt
+          {
+            echo "### Terraform plan — ${{ inputs.environment }}"
+            grep -E '^Plan:|^No changes' plan.txt || true
+            echo '<details><summary>Full plan</summary>'; echo; echo '```hcl'; tail -c 60000 plan.txt; echo '```'; echo '</details>'
+          } > summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan-${{ inputs.environment }}
+          path: |
+            terraform/plan.txt
+            terraform/summary.md
+          retention-days: 14
+      - name: Apply exactly the plan that was shown
+        if: inputs.apply && steps.plan.outputs.changes == 'true'
+        run: terraform apply -lock-timeout=5m -no-color tfplan
+      - name: Verify hybrid connectivity
+        if: inputs.apply
+        run: |
+          rg="rg-mfg-${{ inputs.environment }}-connectivity"
+          er=$(az network express-route show -g "$rg" -n "erc-mfg-${{ inputs.environment }}-factory" \
+                 --query '{azure:circuitProvisioningState, provider:serviceProviderProvisioningState}' -o tsv)
+          echo "ExpressRoute: $er" | tee -a "$GITHUB_STEP_SUMMARY"
+          for conn in er-factory vpn-factory; do
+            s=$(az network vpn-connection show -g "$rg" -n "conn-mfg-${{ inputs.environment }}-$conn" --query connectionStatus -o tsv || echo unknown)
+            echo "Connection $conn: $s" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          fw=$(az network firewall show -g "$rg" -n "afw-mfg-${{ inputs.environment }}" --query provisioningState -o tsv)
+          [ "$fw" = "Succeeded" ] || { echo "::error::Azure Firewall is $fw"; exit 1; }
