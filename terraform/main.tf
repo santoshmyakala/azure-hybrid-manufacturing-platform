@@ -2,7 +2,7 @@ locals {
   prefix = "${var.name}-${var.environment}"
   tags   = merge(var.tags, { Environment = var.environment })
 
-  azure_all   = concat([var.hub_cidr], values(var.spoke_cidrs))
+  azure_all = concat([var.hub_cidr], values(var.spoke_cidrs))
 
   # hub subnets (/22): fixed names required by Azure for the gateway, firewall and bastion subnets
   hub_subnets = {
